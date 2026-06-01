@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Escalera Mecánica — Modelo 3D</title>
+<style>
+	* { box-sizing: border-box; margin: 0; padding: 0; }
+	html, body { height: 100%; background: #ffffff; color: #e6eef8; font-family: Inter, 'Segoe UI', system-ui, sans-serif; overflow: hidden; }
+	#canvas { display: block; width: 100%; height: 100vh; }
+	/* UI overlay */
+	#ui { position: fixed; inset: 0; pointer-events: none; }
+	#header { position: absolute; left: 50%; top: 15px; transform: translateX(-50%); text-align: center; pointer-events: none; width: 90%; }
+	#header h1 { font-size: 18px; letter-spacing: 1px; color: #ffffff; margin-bottom: -15px; }
+	#header p { font-size: 12px; color: #9ba7c7; }
+
+	#controls { position: absolute; left: 18px; top: 100px; display: flex; flex-direction: column; gap: 10px; pointer-events: all; }
+	.ctrl-btn { background: rgba(10,12,16,0.95); border: 1px solid #2f3240; padding: 10px 14px; border-radius: 999px; color: #d7e6ff; cursor: pointer; font-weight: 600; min-width: 160px; text-align: center; display: inline-flex; align-items: center; justify-content: center; gap: 8px; transition: background 0.12s ease, transform 0.08s ease; }
+	.ctrl-btn:hover { background: rgba(25,30,45,0.95); border-color: #5580ff; transform: translateY(-1px); }
+	.ctrl-small { padding: 8px 10px; font-size: 13px; }
+	.ctrl-row { display:flex; gap: 8px; align-items: center; }
+	#switch-btn { min-width: 160px; font-weight: 700; letter-spacing: 0.5px; }
+	#switch-btn.switch-on { background: linear-gradient(90deg,#1fb954,#4de06a); border-color: rgba(60,180,90,0.9); color: #042; box-shadow: 0 8px 20px rgba(30,200,80,0.12); }
+	#switch-btn.switch-off { background: linear-gradient(90deg,#2f3240,#1a1c21); border-color: #444; color: #d7e6ff; box-shadow: none; }
+	.label { font-size: 12px; color: #a8b6d8; }
+	.meter { width: 130px; height: 10px; background: #0f1114; border-radius: 6px; overflow: hidden; border: 1px solid #222; }
+	.meter > i { display: block; height: 100%; background: linear-gradient(90deg,#44ff66,#ffd24d,#ff4d4d); width: 100%; transition: width 0.1s linear; }
+
+	#legend { position: absolute; right: 20px; bottom: 20px; background: rgba(6,8,12,0.8); padding: 12px; border-radius: 8px; border: 1px solid #222; pointer-events: none; font-size: 12px; color: #bfcde3; }
+	#legend .row { display:flex; gap: 4px; align-items: center; margin-bottom: -5px; }
+	#legend .row:last-child { margin-bottom: -10px; }
+	.chip { width: 12px; height: 12px; border-radius: 3px; display: inline-block; border: 1px solid rgba(255,255,255,0.1); }
+
+	#footer { position: absolute; left: 18px; bottom: 18px; color: #7f94b6; font-size: 12px; pointer-events: none; }
+
+	@media (max-width: 600px) {
+		#controls { left: 10px; top: 74px; }
+		.meter { width: 110px; }
+	}
+</style>
+</head>
+<body>
+<canvas id="canvas"></canvas>
+<div id="ui">
+  <div id="header">
+    <h1>Escalera Mecánica</h1>
+    <p>Modelado 3D — Visualización Interactiva</p>
+  </div>
+
+	<div id="controls">
+		<button id="switch-btn" class="ctrl-btn ctrl-small switch-on">ON</button>
+    <div style="display:flex;gap:8px;align-items:center">
+      <div class="label">Velocidad</div>
+      <input id="speed-range" type="range" min="0" max="2" step="0.01" value="0.9" style="width:140px">
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:6px">
+      <div class="label">Batería</div>
+      <div class="meter"><i id="battery-fill" style="width:100%"></i></div>
+      <div id="battery-ind" style="font-size:12px;color:#9fb3d9">🔋 100%</div>
+    </div>
+  </div>
+
+  <div id="legend">
+    <div class="row"><span class="chip" style="background:#ffffff"></span>Escalones</div>
+    <div class="row"><span class="chip" style="background:#d2a679"></span> Pasamanos</div>
+    <div class="row"><span class="chip" style="background:#44444a"></span> Sub-tubos de Soporte</div>
+    <div class="row"><span class="chip" style="background:#ffcc00"></span> Servomotores</div>
+    <div class="row"><span class="chip" style="background:#2f9cf3"></span> Batería</div>
+  </div>
+
+  <div id="footer">Usa el mouse para orbitar y ver desde cualquier ángulo</div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// --- Configuración de la Escena ---
+const canvas = document.getElementById('canvas');
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true;
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0a0a0f);
+
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 100);
+let cameraTarget = new THREE.Vector3(0, 0.8, 0);
+camera.position.set(3.5, 4.0, 4.5); 
+camera.lookAt(cameraTarget);
+
+window.addEventListener('resize', () => {
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// Iluminación Estética
+scene.add(new THREE.AmbientLight(0x606075, 0.8));
+const lightKey = new THREE.DirectionalLight(0xffffff, 1.3);
+lightKey.position.set(6, 12, 5);
+lightKey.castShadow = true;
+lightKey.shadow.mapSize.width = 2048;
+lightKey.shadow.mapSize.height = 2048;
+scene.add(lightKey);
+
+const lightFill = new THREE.PointLight(0x88bbff, 0.5, 20);
+lightFill.position.set(-5, 4, -3);
+scene.add(lightFill);
+
+const grid = new THREE.GridHelper(12, 24, 0x222233, 0x12121c);
+grid.position.y = -0.01;
+scene.add(grid);
+
+// Materiales del Prototipo
+const matShell = new THREE.MeshStandardMaterial({color: 0x16161a, roughness: 0.4, metalness: 0.2}); 
+const matSteps = new THREE.MeshStandardMaterial({color: 0xffffff, roughness: 0.2, metalness: 0.1}); 
+const matMotor = new THREE.MeshStandardMaterial({color: 0xffcc00, roughness: 0.4, metalness: 0.4}); 
+const matBattery = new THREE.MeshStandardMaterial({color: 0x2f9cf3, roughness: 0.5});
+const matWood = new THREE.MeshStandardMaterial({color: 0xd2a679, roughness: 0.6, metalness: 0.0}); // Madera café claro
+const matSupportTube = new THREE.MeshStandardMaterial({color: 0x44444a, roughness: 0.3, metalness: 0.7}); // Metal sub-tubos
+
+function box(w, h, d, mat) {
+  const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+function cy(r, h, mat) {
+  const m = new THREE.Mesh(new THREE.CylinderGeometry(r, r, h, 32), mat);
+  m.castShadow = true; m.receiveShadow = true;
+  return m;
+}
+
+// --- Parámetros Estructurales ---
+const ESCALATOR_WIDTH = 1.1; 
+const WALL_WIDTH = 0.08;
+const posBottom = new THREE.Vector3(0, 0.3, -1.9); 
+const posTop = new THREE.Vector3(0, 1.7, 1.9);
+const slope = new THREE.Vector3().subVectors(posTop, posBottom);
+const slopeLen = slope.length();
+const laneDir = slope.clone().normalize();
+
+const escalator = new THREE.Group();
+scene.add(escalator);
+
+
+// --- Construcción de Estructuras Laterales Inclinadas (Paredes + Pasamanos Unificados) ---
+function createPremiumHandrail(xPos) {
+  const hrGroup = new THREE.Group();
+  // Posicionamos el grupo en la línea central superior de la rampa
+  hrGroup.position.set(xPos, (posBottom.y + posTop.y)/2 + 0.5, (posBottom.z + posTop.z)/2);
+  
+  // Orientamos todo el grupo para que su eje Z local coincida exactamente con la inclinación de los escalones
+  hrGroup.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), laneDir);
+  
+  // 1. Tubo Principal de Madera (Café Claro)
+  const mainRail = cy(0.035, 4.6, matWood);
+  mainRail.rotation.x = Math.PI / 2; // Acostado sobre el eje Z local inclinado
+  mainRail.position.set(0, 0.3, 0);   // Separado hacia arriba
+  hrGroup.add(mainRail);
+  
+  // 2. Sub-tubos de soporte fijados a la estructura de la pared
+  const numSupports = 6;
+  for (let i = 0; i < numSupports; i++) {
+    const pct = i / (numSupports - 1);
+    const localZ = (pct - 0.5) * 4.2; // Distribución a lo largo del pasamanos
+    
+    const subTube = cy(0.012, 0.3, matSupportTube);
+    // En el espacio local, el cilindro conecta la parte superior de la pared con el pasamanos perfectamente
+    subTube.position.set(0, 0.15, localZ);
+    hrGroup.add(subTube);
+  }
+
+  // 3. Paredes Laterales Acopladas (Mismo ángulo, rotación y alineación)
+  const wallHeight = 1.3; 
+  const wall = box(WALL_WIDTH, wallHeight, 4.6, matShell);
+  // Se posiciona localmente hacia abajo de forma que su borde superior calce justo donde inician los sub-tubos (y = 0)
+  wall.position.set(0, -wallHeight / 2, 0);
+  hrGroup.add(wall);
+  
+  escalator.add(hrGroup);
+}
+
+// Generación simétrica en ambos lados de la escalera (Pared + Soporte + Pasamanos combinados)
+createPremiumHandrail(-ESCALATOR_WIDTH/2 - WALL_WIDTH/2);
+createPremiumHandrail(ESCALATOR_WIDTH/2 + WALL_WIDTH/2);
+
+
+// --- Sistema de Peldaños Grandes (Lineal Tradicional) ---
+const STEP_COUNT = 15; 
+const stepsGroup = new THREE.Group();
+escalator.add(stepsGroup);
+
+const stepWidth = ESCALATOR_WIDTH - 0.04; 
+const stepDepth = 0.45; // Súper vistosos y grandes
+const stepHeight = 0.04;
+
+for(let i = 0; i < STEP_COUNT; i++) {
+  const stepUnit = new THREE.Group();
+  
+  // Huella Superior Blanca
+  const tread = box(stepWidth, stepHeight, stepDepth, matSteps);
+  tread.position.set(0, 0, 0);
+  stepUnit.add(tread);
+  
+  // Contrahuella trasera de acople
+  const riser = box(stepWidth, 0.22, 0.02, new THREE.MeshStandardMaterial({color: 0x25252b}));
+  riser.position.set(0, -0.11, -stepDepth/2 + 0.01);
+  stepUnit.add(riser);
+
+  stepUnit.userData.base = (i / STEP_COUNT) * slopeLen;
+  stepsGroup.add(stepUnit);
+}
+
+// --- Servomotores (Alineación vertical modificada) ---
+const servoSize = 0.32;
+const lateralX = ESCALATOR_WIDTH/2 + WALL_WIDTH + servoSize/2;
+
+// Servo Inferior Derecho: Subido verticalmente
+const motor1 = box(servoSize, servoSize, servoSize * 1.4, matMotor);
+motor1.position.set(lateralX, 0.18, -1.4); 
+escalator.add(motor1);
+
+const shaft1 = cy(0.04, servoSize, new THREE.MeshStandardMaterial({color: 0x444444, metalness: 0.8}));
+shaft1.rotation.z = Math.PI / 2;
+shaft1.position.set(ESCALATOR_WIDTH/2 + WALL_WIDTH/2, 0.18, -1.4);
+escalator.add(shaft1);
+
+// Servo Superior Derecho: Bajado verticalmente
+const motor2 = box(servoSize, servoSize, servoSize * 1.4, matMotor);
+motor2.position.set(lateralX, 1.50, 1.8); 
+escalator.add(motor2);
+
+const shaft2 = shaft1.clone();
+shaft2.position.set(ESCALATOR_WIDTH/2 + WALL_WIDTH/2, 1.50, 1.8);
+escalator.add(shaft2);
+
+// --- Batería de Energía (Abajo de la escalera) ---
+const battery = box(0.5, 0.28, 0.7, matBattery);
+battery.position.set(0, 0.18, 0); 
+escalator.add(battery);
+
+
+// --- Lógica del Sistema por Switch ---
+let switchOn = true; 
+let batteryLevel = 100;
+let motorSpeed = 0.9;
+let offset = 0;
+
+const switchBtn = document.getElementById('switch-btn');
+const speedRange = document.getElementById('speed-range');
+const batteryFill = document.getElementById('battery-fill');
+const batteryInd = document.getElementById('battery-ind');
+
+function updateUI() {
+  // Update text and visual state
+  switchBtn.textContent = switchOn ? 'ON' : 'OFF';
+  if (switchOn) {
+    switchBtn.classList.add('switch-on');
+    switchBtn.classList.remove('switch-off');
+  } else {
+    switchBtn.classList.remove('switch-on');
+    switchBtn.classList.add('switch-off');
+  }
+
+  batteryFill.style.width = Math.max(0, batteryLevel) + '%';
+  batteryInd.textContent = `🔋 ${Math.max(0, Math.round(batteryLevel))}%`;
+}
+
+switchBtn.addEventListener('click', () => {
+  if (batteryLevel <= 0) return;
+  switchOn = !switchOn;
+  updateUI();
+});
+
+speedRange.addEventListener('input', () => {
+  motorSpeed = parseFloat(speedRange.value);
+});
+
+// Note: Reset button removed per request; camera reset logic remains accessible programmatically if needed.
+
+// --- Controles de Órbita de Cámara ---
+let isDragging = false;
+let prevMousePos = { x: 0, y: 0 };
+// Initial camera: top-corner perspective for a clear overview
+let theta = 869.5, phi = 0.90, radius = 10.0;
+
+function updateCameraPos() {
+  camera.position.x = radius * Math.sin(phi) * Math.sin(theta);
+  camera.position.y = radius * Math.cos(phi);
+  camera.position.z = radius * Math.sin(phi) * Math.cos(theta);
+  camera.lookAt(cameraTarget);
+}
+
+canvas.addEventListener('pointerdown', e => {
+  isDragging = true;
+  prevMousePos = { x: e.clientX, y: e.clientY };
+});
+
+window.addEventListener('pointerup', () => isDragging = false);
+
+window.addEventListener('pointermove', e => {
+  if (!isDragging) return;
+  const deltaX = e.clientX - prevMousePos.x;
+  const deltaY = e.clientY - prevMousePos.y;
+
+  theta -= deltaX * 0.007;
+  phi = Math.max(0.1, Math.min(Math.PI / 2 - 0.05, phi - deltaY * 0.007));
+
+  prevMousePos = { x: e.clientX, y: e.clientY };
+  updateCameraPos();
+});
+
+canvas.addEventListener('wheel', e => {
+  radius = Math.max(3.5, Math.min(12, radius + e.deltaY * 0.01));
+  updateCameraPos();
+}, { passive: true });
+
+
+// --- Loop de Animación Tradicional Lineal ---
+let lastTime = performance.now();
+
+function animate() {
+  const now = performance.now();
+  const dt = Math.min(0.05, (now - lastTime) / 1000);
+  lastTime = now;
+
+  if (switchOn && batteryLevel > 0) {
+    offset = (offset + motorSpeed * dt) % slopeLen;
+    batteryLevel = Math.max(0, batteryLevel - dt * (motorSpeed * 1.8));
+
+    if (batteryLevel <= 0) {
+      // Auto-refill immediately when drained and resume operation
+      batteryLevel = 100;
+      switchOn = true;
+    }
+  }
+
+  // Safety: if for any reason battery is at or below 0 (e.g. external change), refill and resume
+  if (batteryLevel <= 0) {
+    batteryLevel = 100;
+    switchOn = true;
+  }
+
+  // Actualización tradicional lineal: reaparecen abajo suavemente tras llegar arriba
+  stepsGroup.children.forEach(s => {
+    const raw = (s.userData.base + offset) % slopeLen;
+    const pos = posBottom.clone().add(laneDir.clone().multiplyScalar(raw));
+    s.position.copy(pos);
+  });
+
+updateUI();
+renderer.render(scene, camera);
+  requestAnimationFrame(animate);
+}
+
+// Inicialización Eficiente
+updateCameraPos();
+updateUI();
+animate();
+</script>
+</body>
+</html>
